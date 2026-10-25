@@ -61,10 +61,14 @@ public final class InputBridge {
     private volatile String lastRepair = "없음";
     private volatile long lastHealthyAt;
     private volatile long lastLostAt;
+    private long continuouslyHealthySince;
     private volatile int successfulRecoveries;
     private volatile int disconnectCount;
 
     private ServiceConnection activeConnection;
+    // Shizuku's Java callback cache can outlive a dead server Binder. Keep
+    // the old registration until a new server is available to clear it.
+    private ServiceConnection staleConnection;
     private int bindGeneration;
     private volatile int configureGeneration;
     private boolean bound;
@@ -242,10 +246,18 @@ public final class InputBridge {
     private void onShizukuAvailable() {
         main.post(() -> {
             if (!serverRunning()) return;
+            if (staleConnection != null) {
+                // Provider-level Binder restart can leave Shizuku's local
+                // ShizukuServiceConnection cache pointing to an old server.
+                try { Shizuku.unbindUserService(args, staleConnection, false); }
+                catch (Throwable ignored) { }
+                staleConnection = null;
+                backoff.reset(); // A genuinely new Shizuku session gets fresh retries.
+            }
             if (bound && remote != null && remote.asBinder().isBinderAlive()) return;
-            if (bound && remote == null) {
-                // A previous pending bind may be wedged after the Shizuku
-                // manager restarted. Remove its connection registration.
+            if (bound) {
+                // A previous pending/dead service may be wedged. Remove its
+                // callbacks before creating a new binder connection object.
                 clearBinding(false);
             }
             bindIfNeeded();
@@ -255,6 +267,7 @@ public final class InputBridge {
     private void onShizukuDead() {
         main.post(() -> {
             stopPlayingForDisconnect("Shizuku 서비스 종료");
+            staleConnection = activeConnection;
             lastDisconnect = "Shizuku Binder 사망";
             lastLostAt = SystemClock.elapsedRealtime();
             disconnectCount++;
@@ -355,6 +368,7 @@ public final class InputBridge {
                     backendReady = true;
                     configuredAt = SystemClock.elapsedRealtime();
                     missingCycles = 0;
+                    continuouslyHealthySince = 0;
                     configurationFailures = 0;
                     successfulRecoveries++;
                     status = "UHID 등록 완료 · Android 장치 확인 중";
@@ -415,6 +429,7 @@ public final class InputBridge {
         backendReady = false;
         configuredAt = 0;
         missingCycles = 0;
+        continuouslyHealthySince = 0;
         recoveryTicket++;
         recoveryScheduled = false;
     }
@@ -480,10 +495,13 @@ public final class InputBridge {
         int seen = registeredKeyboardCount();
         if (seen >= requestedCount) {
             missingCycles = 0;
-            lastHealthyAt = SystemClock.elapsedRealtime();
-            backoff.reset();
+            long now = SystemClock.elapsedRealtime();
+            lastHealthyAt = now;
+            if (continuouslyHealthySince == 0) continuouslyHealthySince = now;
+            if (now - continuouslyHealthySince >= 20000L) backoff.reset();
             status = "QWERTY 키보드 연결 완료 · Android " + seen + "개 인식";
         } else {
+            continuouslyHealthySince = 0;
             missingCycles++;
             status = "가상 키보드 인식 누락 (" + seen + "/"
                     + requestedCount + ") · 재등록 점검 중";
@@ -515,8 +533,12 @@ public final class InputBridge {
         if (seen >= requestedCount) {
             missingCycles = 0;
             lastHealthyAt = now;
-            backoff.reset();
+            if (continuouslyHealthySince == 0) continuouslyHealthySince = now;
+            // A keyboard flapping every ~7 seconds must not reset the
+            // recovery budget every time it briefly becomes available.
+            if (now - continuouslyHealthySince >= 20000L) backoff.reset();
         } else {
+            continuouslyHealthySince = 0;
             missingCycles++;
             if (missingCycles == 1) {
                 status = "Android 가상 키보드 연결 끊김 감지";
