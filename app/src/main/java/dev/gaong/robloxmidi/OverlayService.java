@@ -28,6 +28,7 @@ public class OverlayService extends Service {
     private WindowManager.LayoutParams params;
     private View overlay;
     private PlayerController player;
+    private InputBridge bridge;
     private TextView label;
     private Button play;
     private final Runnable tick = new Runnable() {
@@ -36,7 +37,8 @@ public class OverlayService extends Service {
                 label.setText(player.filename() + "\n" +
                         PlayerController.pretty(player.positionUs()) + " / " +
                         PlayerController.pretty(player.durationUs()) +
-                        "   " + String.format(java.util.Locale.US, "%.2f×", player.speed()));
+                        "   " + String.format(java.util.Locale.US, "%.2f×", player.speed()) +
+                        "\n" + bridge.status());
                 play.setText(player.isPlaying() ? "Ⅱ" : "▶");
                 handler.postDelayed(this, 300);
             }
@@ -46,6 +48,7 @@ public class OverlayService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         player = PlayerController.get(this);
+        bridge = InputBridge.get(this);
         windows = (WindowManager)getSystemService(WINDOW_SERVICE);
     }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -110,7 +113,7 @@ public class OverlayService extends Service {
         close.getLayoutParams().width = dp(38);
         root.addView(titleRow);
         label = text("", 12);
-        label.setMaxLines(3);
+        label.setMaxLines(5);
         root.addView(label);
 
         LinearLayout controls = new LinearLayout(this);
@@ -128,6 +131,11 @@ public class OverlayService extends Service {
         small("−速", secondary, () -> player.setSpeed(player.speed() - 0.10));
         small("+速", secondary, () -> player.setSpeed(player.speed() + 0.10));
         root.addView(secondary);
+        LinearLayout testing = new LinearLayout(this);
+        small("QWERTY T-Y-U 입력 시험", testing, bridge::testQuickKeys);
+        small("상태 확인", testing, () ->
+                Toast.makeText(this, bridge.status(), Toast.LENGTH_LONG).show());
+        root.addView(testing);
         params = new WindowManager.LayoutParams(
                 dp(320), WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,

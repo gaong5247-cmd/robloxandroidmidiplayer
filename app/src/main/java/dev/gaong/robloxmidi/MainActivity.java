@@ -1,6 +1,8 @@
 package dev.gaong.robloxmidi;
 
 import android.Manifest;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
@@ -15,6 +17,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.view.Gravity;
+import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -39,6 +43,7 @@ public class MainActivity extends Activity {
     private InputBridge input;
     private SharedPreferences prefs;
     private TextView status, midiName, time, speedLabel, transposeLabel, errorLabel, mapLabel;
+    private TextView localHidTest, diagnosticInfo;
     private Button playButton;
     private SeekBar speedSeek;
     private CheckBox octaveFold, sustain;
@@ -63,6 +68,8 @@ public class MainActivity extends Activity {
         player.setTranspose(prefs.getInt("transpose", 0));
         player.setFold(prefs.getBoolean("fold", true));
         player.setSustain(prefs.getBoolean("pedal", false));
+        player.setTapMode(prefs.getBoolean("tap_mode", true));
+        player.setTapDurationMs(prefs.getInt("tap_ms", 40));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -157,6 +164,19 @@ public class MainActivity extends Activity {
             player.setSustain(b);
             prefs.edit().putBoolean("pedal", b).apply();
         });
+        CheckBox quickMode = new CheckBox(this);
+        quickMode.setText("QWERTY 탭 모드: MIDI 음 길이 대신 키를 짧게 누르기");
+        quickMode.setTextColor(Color.WHITE);
+        quickMode.setChecked(player.tapMode());
+        root.addView(quickMode);
+        quickMode.setOnCheckedChangeListener((v, checked) -> {
+            player.setTapMode(checked);
+            prefs.edit().putBoolean("tap_mode", checked).apply();
+        });
+        Button tapLength = button("키 입력 길이 변경 (기본 40ms)");
+        root.addView(tapLength);
+        tapLength.setOnClickListener(v -> selectTapDuration());
+
         hint(root, "기본 61건반은 C2~C7의 Virtual Piano 배열입니다. 게임마다 배열이 다르면 아래에서 수정할 수 있습니다.");
         gap(root, 12);
 
@@ -186,9 +206,44 @@ public class MainActivity extends Activity {
         root.addView(test);
         test.setOnClickListener(v -> input.testMiddleC());
 
+        gap(root, 14);
+        TextView hardwareHeading = label("QWERTY 하드웨어 호환성 / 진단", 19, Color.WHITE);
+        hardwareHeading.setTypeface(null, 1);
+        root.addView(hardwareHeading);
+        Button profile = button("가상 키보드 프로필 (USB 1개 권장)");
+        root.addView(profile);
+        profile.setOnClickListener(v -> selectKeyboardProfile());
+
+        Button localTest = button("① Android 앱에서 HID 키 수신 검사");
+        root.addView(localTest);
+        localTest.setOnClickListener(v -> {
+            if (localHidTest != null) localHidTest.setText("C4 키 수신 대기 중... (1초 후 전송)");
+            ui.postDelayed(() -> input.testMiddleC(), 700);
+        });
+        localHidTest = label("진단 대기 중: C4를 누르면 Android가 인식했는지 표시", 12, 0xFFABCFEB);
+        root.addView(localHidTest);
+
+        Button gameTest = button("② 게임용 QWERTY T-Y-U 테스트 (1초 후)");
+        root.addView(gameTest);
+        gameTest.setOnClickListener(v -> input.testQuickKeys());
+
+        Button copyDiag = button("③ HID 진단 정보 복사");
+        root.addView(copyDiag);
+        copyDiag.setOnClickListener(v -> {
+            String report = input.diagnostics() +
+                    "App test: " + localHidTest.getText() + "\n" +
+                    "Tap mode=" + player.tapMode() + " durationMs=" + player.tapDurationMs() + "\n";
+            ClipboardManager clipboard = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("QWERTY diagnostics", report));
+            toast("진단 정보를 복사했습니다");
+        });
+        diagnosticInfo = label("", 12, 0xFF9CB5D4);
+        root.addView(diagnosticInfo);
+        hint(root, "테스트: 앱에서 HID 수신 확인 → Roblox를 완전히 종료한 뒤 다시 시작 → 게임의 QWERTY 모드에서 T/Y/U 입력 확인. 게임마다 모바일 키보드 입력 지원 여부가 다를 수 있습니다.");
+
         errorLabel = label("", 12, 0xFFFFC0B4);
         root.addView(errorLabel);
-        hint(root, "주의: Android가 키 이벤트를 허용해도 Roblox 게임에서 합성 키보드 입력을 무시할 수 있습니다. 플로팅 창의 C4 테스트로 먼저 확인하세요.");
+        hint(root, "주의: Android가 UHID 키보드를 인식해도 Roblox의 모든 게임이 모바일 키보드 입력을 처리하는 것은 아닙니다. 텍스트 채팅이 되는 것만으로는 확인할 수 없습니다.");
         hint(root, "원본 HuMIDI의 음악 재생 아이디어에서 영감을 받은 독립 Android 구현이며, 게임별 호환은 아직 실기기 검증이 필요합니다.");
         setContentView(scroll);
         input.requestOrConnect();
@@ -248,6 +303,53 @@ public class MainActivity extends Activity {
                 })
                 .setNegativeButton("취소", null).show();
     }
+    private void selectTapDuration() {
+        int[] ms = {25, 40, 60, 90, 140};
+        String[] items = {"25ms (빠름)", "40ms (기본)", "60ms", "90ms", "140ms (느림)"};
+        new AlertDialog.Builder(this).setTitle("QWERTY 누름 시간")
+                .setItems(items, (dialog, which) -> {
+                    player.setTapDurationMs(ms[which]);
+                    prefs.edit().putInt("tap_ms", ms[which]).apply();
+                    toast("키 누름 " + ms[which] + "ms");
+                }).show();
+    }
+
+    private void selectKeyboardProfile() {
+        String[] modes = {
+                "USB HID 키보드 1개 (추천 / 가장 단순한 방식)",
+                "USB HID 키보드 4개 (화음 우선)",
+                "VIRTUAL HID 키보드 1개 (호환성 대안)",
+                "VIRTUAL HID 키보드 4개 (실험용)"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("QWERTY 가상 키보드 방식")
+                .setMessage("프로필을 바꾼 다음 Roblox를 완전히 종료하고 다시 시작하세요. MidiConnect는 사용하지 않습니다.")
+                .setItems(modes, (dialog, which) -> {
+                    int count = (which % 2 == 0) ? 1 : 4;
+                    int bus = which < 2 ? UhidProtocol.BUS_USB : UhidProtocol.BUS_VIRTUAL;
+                    input.setProfile(count, bus);
+                    toast("설정 저장됨. UHID 등록 후 Roblox를 재실행하세요.");
+                }).show();
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        // Observe what Android delivered into an actual Activity (not a text field).
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getKeyCode() == KeyEvent.KEYCODE_T) {
+            InputDevice device = event.getDevice();
+            if (device != null && device.getName().startsWith(UhidKeyboard.NAME_PREFIX)) {
+                if (localHidTest != null) {
+                    localHidTest.setText("Android HID 입력 수신 성공: T key / id=" +
+                            event.getDeviceId() + " source=0x" +
+                            Integer.toHexString(event.getSource()) +
+                            " / " + device.getName());
+                }
+                // Do not accidentally trigger a focused button.
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
     private void startOverlay() {
         if (!Settings.canDrawOverlays(this)) {
             Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -268,6 +370,12 @@ public class MainActivity extends Activity {
     private void refresh() {
         if (status == null) return;
         status.setText("Shizuku: " + input.status() + (input.isReady() ? " ✓" : ""));
+        if (diagnosticInfo != null) {
+            diagnosticInfo.setText("설정: " + input.keyboardCount() + "개 / " +
+                    (input.keyboardBus() == UhidProtocol.BUS_USB ? "USB" : "VIRTUAL") +
+                    " · Android 인식 " + input.registeredKeyboardCount() + "개 · " +
+                    (player.tapMode() ? "QWERTY 탭 " + player.tapDurationMs() + "ms" : "QWERTY 홀드"));
+        }
         midiName.setText(player.filename() + "  (" + player.notes() + " notes)");
         time.setText(PlayerController.pretty(player.positionUs()) + " / " +
                 PlayerController.pretty(player.durationUs()));
