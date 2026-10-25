@@ -13,7 +13,11 @@ public final class InjectUserService extends IKeyboardInjector.Stub {
     private String state = "UHID_STARTING";
 
     public InjectUserService() {
-        configureKeyboard(1, UhidProtocol.BUS_USB);
+        // No device at construction: the app will configure exactly once after
+        // the Binder connection has been established. The old implementation
+        // created a device here, then immediately destroyed it and re-created
+        // it on first bind, causing unnecessary Android device churn.
+        state = "UHID_PENDING: waiting for keyboard profile";
     }
 
     public InjectUserService(Context context) {
@@ -21,14 +25,19 @@ public final class InjectUserService extends IKeyboardInjector.Stub {
     }
 
     @Override public synchronized boolean configureKeyboard(int count, int bus) {
-        if (keyboards != null) {
+        boolean replacing = keyboards != null;
+        if (replacing) {
             keyboards.close();
             keyboards = null;
+            // Device removal is asynchronous in Android InputReader. Avoid
+            // immediately re-creating an identically named HID on the same tick.
+            android.os.SystemClock.sleep(250);
         }
         state = "UHID_STARTING";
         try {
             keyboards = new UhidKeyboard(count, bus);
-            state = "UHID_READY: " + keyboards.deviceCount() + " keyboard(s), bus=" + bus;
+            state = "UHID_READY: " + keyboards.deviceCount() +
+                    " keyboard(s), bus=" + bus + ", pid=" + android.os.Process.myPid();
             return true;
         } catch (Exception exception) {
             state = "UHID_FAILED: " + exception.getClass().getSimpleName() + ": "
