@@ -218,6 +218,33 @@ public final class PlayerController {
         }
     }
 
+    /**
+     * Preserve the MIDI timeline when the Shizuku UserService disappears.
+     * After a healthy keyboard reconnect, Play can continue from this position
+     * rather than restarting the song at 0:00.
+     */
+    public void onInputDisconnected(String reason) {
+        Thread old;
+        synchronized (mutex) {
+            if (!playing) return;
+            if (!paused) {
+                positionUs = Math.min(durationUs(), Math.max(0, clockPositionLocked()));
+            }
+            lastStopUs = positionUs;
+            playing = false;
+            paused = false;
+            runGeneration++;
+            playbackState = "키보드 연결 끊김";
+            error = "Shizuku/UHID 연결 끊김 @ " + pretty(positionUs) + ": " + reason;
+            lastWarning = "키보드 재연결 후 ▶ 버튼을 눌러 이어서 재생하세요";
+            old = worker;
+            worker = null;
+            mutex.notifyAll();
+        }
+        if (old != null) old.interrupt();
+        pulses.clear();
+    }
+
     public void stop() {
         Thread old;
         synchronized (mutex) {

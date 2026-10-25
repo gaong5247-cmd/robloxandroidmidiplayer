@@ -137,14 +137,21 @@ public class OverlayService extends Service {
         root.addView(secondary);
         LinearLayout testing = new LinearLayout(this);
         small("QWERTY T-Y-U 입력 시험", testing, bridge::testQuickKeys);
-        small("진단 복사", testing, () -> {
+        small("↻ 키보드 복구", testing, () -> {
+            bridge.recoverKeyboard();
+            Toast.makeText(this, "UHID 키보드 다시 등록 중 · 작동 안 하면 Roblox 재실행",
+                    Toast.LENGTH_LONG).show();
+        });
+        root.addView(testing);
+        LinearLayout diagnostics = new LinearLayout(this);
+        small("진단 복사", diagnostics, () -> {
             ClipboardManager clipboard = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("Roblox MIDI diagnostics",
                     bridge.diagnostics() + player.playbackDiagnostics()));
             Toast.makeText(this, "연주 중단 위치와 UHID 로그를 복사했습니다",
                     Toast.LENGTH_LONG).show();
         });
-        root.addView(testing);
+        root.addView(diagnostics);
         params = new WindowManager.LayoutParams(
                 dp(320), WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,

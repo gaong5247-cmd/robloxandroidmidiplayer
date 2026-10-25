@@ -88,13 +88,33 @@ public class MainActivity extends Activity {
 
         status = label("", 14, 0xFFB6DDFB);
         root.addView(status);
-        Button connect = button("1 · Shizuku 연결 / 권한 요청");
+        Button connect = button("1 · Shizuku 연결 / 상태 확인");
         root.addView(connect);
         connect.setOnClickListener(v -> {
             input.requestOrConnect();
             refresh();
         });
-        hint(root, "Shizuku 앱을 실행해 서비스를 시작한 후 이 버튼을 누르세요. Android 11+에서는 무선 디버깅으로 시작할 수 있습니다.");
+
+        Button repair = button("↻ 가상 키보드 다시 등록 (먼저 이 버튼)");
+        root.addView(repair);
+        repair.setOnClickListener(v -> {
+            input.recoverKeyboard();
+            toast("Shizuku를 유지한 채 UHID 키보드를 재등록합니다");
+        });
+
+        Button fullRestart = button("연결이 계속 안 되면 · UserService 완전 재연결");
+        root.addView(fullRestart);
+        fullRestart.setOnClickListener(v ->
+                new AlertDialog.Builder(this)
+                        .setTitle("Shizuku UserService 완전 재연결")
+                        .setMessage("키보드만 복구해도 안 될 때 사용하는 최후의 방법입니다. Android/Shizuku에 따라 재시작이 필요할 수 있습니다.")
+                        .setPositiveButton("완전 재연결", (dialog, which) -> {
+                            input.forceFullReconnect();
+                            toast("서비스 재연결을 시작했습니다. 상태를 확인하세요.");
+                        })
+                        .setNegativeButton("취소", null)
+                        .show());
+        hint(root, "연결이 중간에 끊겼다면 '가상 키보드 다시 등록'을 먼저 누르세요. 복구되어도 Roblox가 이전 키보드를 기억하면 게임을 완전히 종료하고 다시 실행해야 합니다. Shizuku 자체가 꺼졌다면 Shizuku 앱에서 다시 시작해야 합니다.");
         gap(root, 18);
 
         midiName = label("MIDI를 선택하세요", 17, Color.WHITE);
