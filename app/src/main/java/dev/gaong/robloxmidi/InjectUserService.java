@@ -38,7 +38,7 @@ public final class InjectUserService extends IKeyboardInjector.Stub {
     }
 
     @Override public synchronized String getBackendStatus() {
-        return state + (keyboards == null ? "" : " | held=" + keyboards.activeCount());
+        return state + (keyboards == null ? "" : " | " + keyboards.stats());
     }
 
     @Override public synchronized boolean sendKey(int keyCode, boolean down, boolean shift) {

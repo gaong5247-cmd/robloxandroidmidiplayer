@@ -232,7 +232,8 @@ public class MainActivity extends Activity {
         copyDiag.setOnClickListener(v -> {
             String report = input.diagnostics() +
                     "App test: " + localHidTest.getText() + "\n" +
-                    "Tap mode=" + player.tapMode() + " durationMs=" + player.tapDurationMs() + "\n";
+                    "Tap mode=" + player.tapMode() + " durationMs=" + player.tapDurationMs() + "\n" +
+                    player.playbackDiagnostics();
             ClipboardManager clipboard = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("QWERTY diagnostics", report));
             toast("진단 정보를 복사했습니다");
@@ -383,7 +384,9 @@ public class MainActivity extends Activity {
         speedLabel.setText(String.format(Locale.US, "속도  %.2f×", player.speed()));
         transposeLabel.setText(String.format(Locale.US, "조옮김 %+d", player.transpose()));
         mapLabel.setText(prefs.getString("layout", PianoLayout.DEFAULT));
-        errorLabel.setText(player.error());
+        errorLabel.setText(player.playbackSummary() +
+                (player.error().isEmpty() ? "" : "\n" + player.error()) +
+                (player.warning().isEmpty() ? "" : "\n" + player.warning()));
     }
     @Override protected void onResume() {
         super.onResume();

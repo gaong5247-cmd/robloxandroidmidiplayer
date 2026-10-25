@@ -19,7 +19,7 @@ public final class PlayerController {
     private final KeyboardPulseEmitter pulses;
     private volatile boolean tapMode = true;
     private volatile int tapDurationMs = 40;
-    private long runGeneration;
+    private volatile long runGeneration;
     private final Object mutex = new Object();
     private volatile PianoLayout layout = new PianoLayout(PianoLayout.DEFAULT);
     private volatile MidiParser.Song song;
@@ -31,6 +31,12 @@ public final class PlayerController {
     private volatile boolean playing, paused;
     private volatile long positionUs;
     private volatile String error = "";
+    private volatile String lastWarning = "";
+    private volatile String playbackState = "대기 중";
+    private volatile long requestedKeyDowns;
+    private volatile long deliveredKeyDowns;
+    private volatile long skippedKeyDowns;
+    private volatile long lastStopUs;
     private Thread worker;
     private int index;
     private long anchorNs;
@@ -59,6 +65,31 @@ public final class PlayerController {
         tapDurationMs = Math.max(20, Math.min(150, ms));
     }
     public String error() { return error; }
+    public String warning() { return lastWarning; }
+    public String playbackState() { return playbackState; }
+    public long requestedKeyDowns() { return requestedKeyDowns; }
+    public long deliveredKeyDowns() { return deliveredKeyDowns; }
+    public long skippedKeyDowns() { return skippedKeyDowns; }
+    public long lastStopUs() { return lastStopUs; }
+    public String playbackSummary() {
+        return playbackState + " | 노트 " + deliveredKeyDowns + "/" + requestedKeyDowns
+                + (skippedKeyDowns > 0 ? " | 누락 " + skippedKeyDowns : "")
+                + (pulses.releaseFailures() > 0
+                        ? " | 릴리스 오류 " + pulses.releaseFailures() : "");
+    }
+    public String playbackDiagnostics() {
+        return "Playback state=" + playbackState + "\n"
+                + "Playback position=" + pretty(positionUs()) + " / " + pretty(durationUs()) + "\n"
+                + "Last stop position=" + pretty(lastStopUs) + "\n"
+                + "MIDI file=" + filename + "\n"
+                + "Note events delivered=" + deliveredKeyDowns
+                    + " attempted=" + requestedKeyDowns
+                    + " skipped=" + skippedKeyDowns + "\n"
+                + "Tap release errors=" + pulses.releaseFailures()
+                    + " last=" + pulses.releaseError() + "\n"
+                + "Last warning=" + lastWarning + "\n"
+                + "Last error=" + error + "\n";
+    }
     public int notes() { return song == null ? 0 : song.noteCount; }
     public long durationUs() { return song == null ? 0 : song.durationUs; }
     public long positionUs() {
@@ -80,6 +111,12 @@ public final class PlayerController {
             positionUs = 0;
             index = 0;
             error = "";
+            lastWarning = "";
+            playbackState = "MIDI 준비됨";
+            requestedKeyDowns = 0;
+            deliveredKeyDowns = 0;
+            skippedKeyDowns = 0;
+            lastStopUs = 0;
         }
     }
     public void setLayout(String keys) { layout = new PianoLayout(keys); stop(); }
@@ -129,10 +166,24 @@ public final class PlayerController {
 
     public void play() {
         synchronized (mutex) {
-            if (song == null) { error = "MIDI 파일을 먼저 선택하세요"; return; }
-            if (!bridge.isReady()) { error = "Shizuku 서비스를 먼저 연결하세요"; return; }
+            if (song == null) {
+                error = "MIDI 파일을 먼저 선택하세요";
+                playbackState = "재생 거부";
+                return;
+            }
+            if (!bridge.isReady()) {
+                error = "Shizuku UHID 연결이 끊어졌습니다";
+                playbackState = "재생 거부";
+                return;
+            }
             if (playing) { resume(); return; }
             error = "";
+            lastWarning = "";
+            playbackState = "재생 중";
+            requestedKeyDowns = 0;
+            deliveredKeyDowns = 0;
+            skippedKeyDowns = 0;
+            lastStopUs = 0;
             if (positionUs >= song.durationUs) positionUs = 0;
             index = findIndex(song.events, positionUs);
             playing = true;
@@ -150,6 +201,7 @@ public final class PlayerController {
             if (!playing || paused) return;
             positionUs = clockPositionLocked();
             paused = true;
+            playbackState = "일시정지";
         }
         pulses.clear();
     }
@@ -160,6 +212,7 @@ public final class PlayerController {
             anchorUs = positionUs;
             anchorNs = System.nanoTime();
             paused = false;
+            playbackState = "재생 중";
             mutex.notifyAll();
         }
     }
@@ -170,6 +223,8 @@ public final class PlayerController {
             playing = false;
             paused = false;
             runGeneration++;
+            lastStopUs = positionUs;
+            if (!"입력 오류로 중단".equals(playbackState)) playbackState = "사용자 정지";
             positionUs = 0;
             index = 0;
             mutex.notifyAll();
@@ -181,6 +236,7 @@ public final class PlayerController {
     }
 
     private void runPlayer(long generation) {
+        boolean completed = false;
         try {
             while (playing && generation == runGeneration) {
                 MidiParser.Event event = null;
@@ -188,7 +244,8 @@ public final class PlayerController {
                 synchronized (mutex) {
                     if (!playing || generation != runGeneration) break;
                     if (paused) {
-                        try { mutex.wait(150); } catch (InterruptedException e) { break; }
+                        try { mutex.wait(150); }
+                        catch (InterruptedException ignored) { break; }
                         continue;
                     }
                     long now = clockPositionLocked();
@@ -200,35 +257,65 @@ public final class PlayerController {
                             index++;
                         } else {
                             sleepMs = Math.max(1, Math.min(12,
-                                    (long)((next.us-now) / (1000.0*speed))));
+                                    (long)((next.us - now) / (1000.0 * speed))));
                         }
                     } else if (now >= durationUs()) {
+                        completed = true;
                         break;
                     }
                 }
-                if (event != null) {
-                    if (!paused && playing) {
-                        if (event.pedal) {
-                            if (sustain) bridge.send(KeyEvent.KEYCODE_SPACE, event.down, false);
-                        } else {
-                            PianoLayout.Stroke mapped = stroke(event.note);
-                            if (mapped != null) {
-                                if (tapMode) {
-                                    // Most QWERTY piano games react to each fresh KeyDown,
-                                    // not to a sustained physical key state.
-                                    if (event.down) pulses.tap(mapped.code, mapped.shift, tapDurationMs);
-                                } else {
-                                    bridge.send(mapped.code, event.down, mapped.shift);
-                                }
-                            }
+
+                if (event == null) {
+                    try { Thread.sleep(sleepMs); }
+                    catch (InterruptedException ignored) { break; }
+                    continue;
+                }
+                if (!playing || paused || generation != runGeneration) continue;
+
+                if (event.pedal) {
+                    if (sustain) {
+                        boolean accepted = bridge.trySend(KeyEvent.KEYCODE_SPACE,
+                                event.down, false);
+                        if (!accepted) {
+                            lastWarning = "서스테인 이벤트 일시 누락 @ "
+                                    + pretty(positionUs);
                         }
                     }
+                    continue;
+                }
+
+                PianoLayout.Stroke key = stroke(event.note);
+                if (key == null) continue;
+                if (event.down) requestedKeyDowns++;
+
+                // A dense chord can exceed one USB keyboard's 6-key limit,
+                // or combine natural/sharp notes with incompatible Shift.
+                // Ordinary chord saturation must never terminate the song.
+                boolean accepted;
+                if (tapMode) {
+                    if (!event.down) continue;
+                    accepted = pulses.tap(key.code, key.shift, tapDurationMs);
                 } else {
-                    try { Thread.sleep(sleepMs); } catch (InterruptedException ignored) { break; }
+                    accepted = bridge.trySend(key.code, event.down, key.shift);
+                }
+                if (event.down) {
+                    if (accepted) {
+                        deliveredKeyDowns++;
+                    } else {
+                        skippedKeyDowns++;
+                        lastWarning = "화음 처리 중 일부 건반 누락 @ "
+                                + pretty(positionUs) + " (곡은 계속 재생)";
+                    }
                 }
             }
-        } catch (Exception ex) {
-            error = "연주 중 입력 실패: " + ex.getMessage();
+        } catch (Exception failure) {
+            if (generation == runGeneration) {
+                lastStopUs = positionUs;
+                playbackState = "입력 오류로 중단";
+                error = "재생 위치 " + pretty(positionUs)
+                        + "에서 중단: " + failure.getClass().getSimpleName()
+                        + ": " + failure.getMessage();
+            }
         } finally {
             boolean current;
             synchronized (mutex) {
@@ -237,6 +324,10 @@ public final class PlayerController {
                     playing = false;
                     paused = false;
                     positionUs = Math.min(durationUs(), positionUs);
+                    lastStopUs = positionUs;
+                    if (!"입력 오류로 중단".equals(playbackState)) {
+                        playbackState = completed ? "곡 종료" : "재생 정지";
+                    }
                     worker = null;
                 }
             }

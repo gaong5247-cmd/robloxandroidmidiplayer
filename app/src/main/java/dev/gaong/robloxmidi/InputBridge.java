@@ -224,26 +224,37 @@ public final class InputBridge {
         return message.toString();
     }
 
-    public void send(int code, boolean down, boolean shift) throws Exception {
+    /**
+     * Returns false for temporary keyboard occupancy (rather than throwing
+     * and killing the entire MIDI song). True means the UHID report was sent.
+     * A disconnected Shizuku or an actual kernel UHID error remains fatal.
+     */
+    public boolean trySend(int code, boolean down, boolean shift) throws Exception {
         IKeyboardInjector service = remote;
         if (service == null || !backendReady) {
             throw new RemoteException("UHID not ready; check diagnostics");
         }
         try {
-            if (!service.sendKey(code, down, shift)) {
-                String info = service.getBackendStatus();
-                if (info.startsWith("UHID_FAILED")) {
-                    backendReady = false;
-                    status = info;
-                }
-                throw new RemoteException("UHID key rejected: " + info);
+            if (service.sendKey(code, down, shift)) return true;
+            String info = service.getBackendStatus();
+            if (info.startsWith("UHID_READY:")) {
+                return false; // transient report/key capacity
             }
+            backendReady = false;
+            status = info;
+            throw new RemoteException("UHID driver rejected input: " + info);
         } catch (RemoteException error) {
             if (!serverRunning()) {
                 backendReady = false;
                 status = "Shizuku disconnected";
             }
             throw error;
+        }
+    }
+
+    public void send(int code, boolean down, boolean shift) throws Exception {
+        if (!trySend(code, down, shift)) {
+            throw new RemoteException("Temporary UHID key capacity limit");
         }
     }
 

@@ -38,7 +38,9 @@ public class OverlayService extends Service {
                         PlayerController.pretty(player.positionUs()) + " / " +
                         PlayerController.pretty(player.durationUs()) +
                         "   " + String.format(java.util.Locale.US, "%.2f×", player.speed()) +
-                        "\n" + bridge.status());
+                        "\n" + player.playbackSummary() +
+                        "\n" + bridge.status() +
+                        (player.error().isEmpty() ? "" : "\n⚠ " + player.error()));
                 play.setText(player.isPlaying() ? "Ⅱ" : "▶");
                 handler.postDelayed(this, 300);
             }
@@ -113,7 +115,7 @@ public class OverlayService extends Service {
         close.getLayoutParams().width = dp(38);
         root.addView(titleRow);
         label = text("", 12);
-        label.setMaxLines(5);
+        label.setMaxLines(7);
         root.addView(label);
 
         LinearLayout controls = new LinearLayout(this);

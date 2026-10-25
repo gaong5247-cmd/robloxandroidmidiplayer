@@ -20,6 +20,13 @@ public final class KeyboardPulseEmitter {
     private final Map<Integer, ScheduledFuture<?>> pending = new HashMap<>();
     private final Map<Integer, Long> generations = new HashMap<>();
     private long sequence;
+    private volatile long skippedTaps;
+    private volatile long releaseFailures;
+    private volatile String releaseError = "";
+
+    public long skippedTaps() { return skippedTaps; }
+    public long releaseFailures() { return releaseFailures; }
+    public String releaseError() { return releaseError; }
 
     public KeyboardPulseEmitter(InputBridge bridge) {
         this.bridge = bridge;
@@ -31,15 +38,21 @@ public final class KeyboardPulseEmitter {
         releases.setRemoveOnCancelPolicy(true);
     }
 
-    public void tap(int keyCode, boolean shift, int holdMs) throws Exception {
+    public boolean tap(int keyCode, boolean shift, int holdMs) throws Exception {
         int token = (keyCode << 1) | (shift ? 1 : 0);
         synchronized (guard) {
             ScheduledFuture<?> old = pending.remove(token);
             if (old != null) {
                 old.cancel(false);
-                bridge.send(keyCode, false, shift);
+                generations.remove(token);
+                bridge.trySend(keyCode, false, shift);
+                // A real KeyUp report must be observed before repeated KeyDown.
+                Thread.sleep(4);
             }
-            bridge.send(keyCode, true, shift);
+            if (!bridge.trySend(keyCode, true, shift)) {
+                skippedTaps++;
+                return false;
+            }
             final long generation = ++sequence;
             generations.put(token, generation);
             ScheduledFuture<?> future = releases.schedule(() -> {
@@ -47,8 +60,13 @@ public final class KeyboardPulseEmitter {
                     Long live = generations.get(token);
                     if (live == null || live != generation) return;
                     try {
-                        bridge.send(keyCode, false, shift);
-                    } catch (Exception ignored) {
+                        if (!bridge.trySend(keyCode, false, shift)) {
+                            releaseFailures++;
+                            releaseError = "Temporary release overflow";
+                        }
+                    } catch (Exception failure) {
+                        releaseFailures++;
+                        releaseError = failure.getClass().getSimpleName() + ": " + failure.getMessage();
                         bridge.allUp();
                     } finally {
                         pending.remove(token);
@@ -57,6 +75,7 @@ public final class KeyboardPulseEmitter {
                 }
             }, Math.max(20, Math.min(150, holdMs)), TimeUnit.MILLISECONDS);
             pending.put(token, future);
+            return true;
         }
     }
 
