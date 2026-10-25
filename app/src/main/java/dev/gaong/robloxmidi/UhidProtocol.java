@@ -23,14 +23,18 @@ public final class UhidProtocol {
     public static final int UHID_CREATE2 = 11;
     public static final int UHID_INPUT2 = 12;
     public static final int BOOT_KEY_SLOTS = 6;
+    public static final int BUS_USB = 0x03;
+    public static final int BUS_VIRTUAL = 0x06;
 
     private static final byte[] REPORT_DESCRIPTOR = {
             0x05, 0x01, 0x09, 0x06, (byte)0xA1, 0x01,
             0x05, 0x07, 0x19, (byte)0xE0, 0x29, (byte)0xE7,
             0x15, 0x00, 0x25, 0x01, 0x75, 0x01, (byte)0x95, 0x08, (byte)0x81, 0x02,
-            (byte)0x95, 0x01, 0x75, 0x08, (byte)0x81, 0x03,
-            (byte)0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x65,
-            0x05, 0x07, 0x19, 0x00, 0x29, 0x65, (byte)0x81, 0x00,
+            (byte)0x95, 0x01, 0x75, 0x08, (byte)0x81, 0x01,
+            0x05, 0x08, 0x19, 0x01, 0x29, 0x05, (byte)0x95, 0x05, 0x75, 0x01, (byte)0x91, 0x02,
+            (byte)0x95, 0x01, 0x75, 0x03, (byte)0x91, 0x01,
+            0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x15, 0x00, 0x25, 0x65,
+            0x75, 0x08, (byte)0x95, 0x06, (byte)0x81, 0x00,
             (byte)0xC0
     };
 
@@ -38,7 +42,7 @@ public final class UhidProtocol {
 
     private static ByteBuffer event(int type, int payloadSize) {
         return ByteBuffer.allocate(4 + payloadSize)
-                .order(ByteOrder.LITTLE_ENDIAN).putInt(type);
+                .order(ByteOrder.nativeOrder()).putInt(type);
     }
 
     /**
@@ -48,6 +52,13 @@ public final class UhidProtocol {
      * The header is exactly 276 bytes; the kernel zero-fills the rest.
      */
     public static byte[] create2(String deviceName) {
+        return create2(deviceName, BUS_USB);
+    }
+
+    public static byte[] create2(String deviceName, int bus) {
+        if (bus != BUS_USB && bus != BUS_VIRTUAL) {
+            throw new IllegalArgumentException("Unsupported HID bus " + bus);
+        }
         byte[] name = deviceName.getBytes(StandardCharsets.UTF_8);
         if (name.length >= 128) throw new IllegalArgumentException("UHID name too long");
         ByteBuffer bb = event(UHID_CREATE2, 276 + REPORT_DESCRIPTOR.length);
@@ -57,7 +68,7 @@ public final class UhidProtocol {
         bb.put(new byte[64]); // phys
         bb.put(new byte[64]); // uniq
         bb.putShort((short)REPORT_DESCRIPTOR.length);
-        bb.putShort((short)0x03);   // BUS_USB; used as virtual USB HID device
+        bb.putShort((short)bus);    // USB (3) or Linux virtual (6), selectable by user
         bb.putInt(0x1234);         // synthetic vendor ID, not a real device claim
         bb.putInt(0x484D);         // product "HM"
         bb.putInt(1);              // version

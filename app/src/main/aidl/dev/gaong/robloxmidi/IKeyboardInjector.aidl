@@ -5,4 +5,5 @@ interface IKeyboardInjector {
     boolean sendKey(int keyCode, boolean down, boolean shift) = 1;
     void releaseAll() = 2;
     String getBackendStatus() = 3;
+    boolean configureKeyboard(int count, int bus) = 4;
 }

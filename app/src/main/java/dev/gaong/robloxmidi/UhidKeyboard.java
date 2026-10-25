@@ -16,13 +16,14 @@ import java.util.Map;
  * Real virtual HID keyboard devices via /dev/uhid, running ONLY inside a
  * Shizuku shell/root UserService (never as a normal Android app).
  *
- * Four keyboards allow up to 24 held plain keys and independent Shift states.
- * Distinct notes mapped onto the same physical usage are placed on separate
- * keyboard devices where possible; identical strokes are reference-counted.
+ * One virtual keyboard is the compatibility-first default, matching tested
+ * RobloxAndroidMidi's QWERTY mode. Four are optional for chords.
+ * Multiple keyboards may not work in all Roblox/Android combinations.
  */
 public final class UhidKeyboard implements AutoCloseable {
     public static final String NAME_PREFIX = "HuMIDI UHID Keyboard ";
     public static final int DEVICE_COUNT = 4;
+    public static final int DEFAULT_DEVICE_COUNT = 1;
 
     private static final class KeyHold {
         final int usage;
@@ -47,23 +48,33 @@ public final class UhidKeyboard implements AutoCloseable {
     private boolean closed;
 
     public UhidKeyboard() throws IOException {
+        this(DEFAULT_DEVICE_COUNT, UhidProtocol.BUS_USB);
+    }
+
+    public UhidKeyboard(int deviceCount, int bus) throws IOException {
+        if (deviceCount != 1 && deviceCount != DEVICE_COUNT) {
+            throw new IllegalArgumentException("Choose 1 or 4 keyboards");
+        }
+        if (bus != UhidProtocol.BUS_USB && bus != UhidProtocol.BUS_VIRTUAL) {
+            throw new IllegalArgumentException("Choose USB or VIRTUAL HID bus");
+        }
         try {
-            for (int index = 0; index < DEVICE_COUNT; index++) {
+            for (int index = 0; index < deviceCount; index++) {
                 FileDescriptor fd;
                 try {
                     fd = Os.open("/dev/uhid",
-                            OsConstants.O_RDWR | OsConstants.O_CLOEXEC | OsConstants.O_NONBLOCK,
+                            OsConstants.O_RDWR | OsConstants.O_CLOEXEC,
                             0);
                 } catch (ErrnoException e) {
                     throw new IOException("Cannot open /dev/uhid: " + e.getMessage(), e);
                 }
                 KeyboardDevice device = new KeyboardDevice(fd);
                 devices.add(device);
-                write(device, UhidProtocol.create2(NAME_PREFIX + (index + 1)));
+                write(device, UhidProtocol.create2(NAME_PREFIX + (index + 1), bus));
             }
             // Android InputReader device enumeration is asynchronous.
             // Delay availability until the kernel has had time to register devices.
-            SystemClock.sleep(450);
+            SystemClock.sleep(800);
         } catch (IOException | RuntimeException failure) {
             close();
             throw failure;
