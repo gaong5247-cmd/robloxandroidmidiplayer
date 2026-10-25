@@ -184,6 +184,7 @@ public final class PlayerController {
             deliveredKeyDowns = 0;
             skippedKeyDowns = 0;
             lastStopUs = 0;
+            pulses.resetDiagnostics();
             if (positionUs >= song.durationUs) positionUs = 0;
             index = findIndex(song.events, positionUs);
             playing = true;

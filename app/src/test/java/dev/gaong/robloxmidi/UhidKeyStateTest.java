@@ -86,6 +86,26 @@ public class UhidKeyStateTest {
         assertEquals(11 + 7, state.keyDowns());
     }
 
+    @Test public void sustainedDenseMidiSequenceKeepsAcceptingNotes() {
+        UhidKeyState state = new UhidKeyState(1);
+        // Represents repeated mixed black/white notes, chords and overlap
+        // over a long MIDI excerpt, including more than 6 held usages.
+        for (int i = 0; i < 6_000; i++) {
+            int usage = 4 + (i % 26);
+            boolean shift = (i % 5) == 0;
+            UhidKeyState.Change pressed = state.change(usage, true, shift);
+            assertTrue("Every attempted press must produce a report or be ref-counted",
+                    pressed.shouldWrite());
+            assertTrue(state.activeCount() <= 6);
+            if ((i % 4) == 0) {
+                state.change(usage, false, shift);
+            }
+        }
+        assertTrue(state.recoveries() > 0);
+        assertEquals(6_000L, state.keyDowns());
+        assertTrue(state.activeCount() <= 6);
+    }
+
     @Test public void resetClearsAllKeysWithoutLosingCounters() {
         UhidKeyState state = new UhidKeyState(1);
         state.change(0x17, true, false);

@@ -4,6 +4,8 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
@@ -135,8 +137,13 @@ public class OverlayService extends Service {
         root.addView(secondary);
         LinearLayout testing = new LinearLayout(this);
         small("QWERTY T-Y-U 입력 시험", testing, bridge::testQuickKeys);
-        small("상태 확인", testing, () ->
-                Toast.makeText(this, bridge.status(), Toast.LENGTH_LONG).show());
+        small("진단 복사", testing, () -> {
+            ClipboardManager clipboard = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("Roblox MIDI diagnostics",
+                    bridge.diagnostics() + player.playbackDiagnostics()));
+            Toast.makeText(this, "연주 중단 위치와 UHID 로그를 복사했습니다",
+                    Toast.LENGTH_LONG).show();
+        });
         root.addView(testing);
         params = new WindowManager.LayoutParams(
                 dp(320), WindowManager.LayoutParams.WRAP_CONTENT,

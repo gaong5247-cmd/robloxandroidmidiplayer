@@ -1,26 +1,17 @@
-# Roblox Android MIDI Player v0.3.0 — QWERTY Compatibility Preview
+# Roblox MIDI Android v0.4.0 — Stability Preview
 
-**QWERTY ONLY. This release does not implement or require MidiConnect.**
+**Fix for 7-second cutoffs under dense QWERTY MIDI playback.**
 
-## Changes from v0.2
+- Root cause candidate confirmed in v0.3 source: `UhidKeyboard` returned `false` on 6-key rollover or a mixed shifted/unshifted chord, and that error was propagated to `PlayerController` and terminated the entire song.
+- New `UhidKeyState` allocator automatically reclaims incompatible held keys, sends explicit key-up, then sends the next key-down. No MIDI song should stop merely because a normal chord exceeds a single keyboard's limitations.
+- Keeps the **working one-keyboard USB UHID QWERTY mode**; no MidiConnect or game-specific commands.
+- A 4ms boundary on emergency release/repress gives Android time to observe the change.
+- Repeated-note key-up/retrigger now has a brief 4ms gap to improve re-detection.
+- Transient key saturation is treated as an individual skipped note, not a reason to abort the full MIDI.
+- Added `재생 중 / 곡 종료 / 입력 오류로 중단` status, per-song note counters, stop timestamp and visible error display on floating controller.
+- Floating controller has **진단 복사** to copy Shizuku UHID recovery stats and MIDI error position into the clipboard.
+- Automated regression tests include mixed Shift/plain chords, seventh-key rollover and 6,000 stress-note transitions.
 
-- Replaced "4 virtual keyboards + long key hold" defaults with **1 virtual USB HID keyboard + 40ms key tap**, based on an existing Android Roblox QWERTY player implementation.
-- Added user-selectable **USB 1 / USB 4 / VIRTUAL 1 / VIRTUAL 4** UHID configurations.
-- Real UHID registration is now resettable through Shizuku, avoiding the need to manually restart the Shizuku daemon when testing device profiles.
-- Added **rapid retrigger scheduling** for repeated MIDI notes; configurable 25–140ms key tap duration and optional sustain/hold mode.
-- Added an **on-device key event reception test** that detects whether the Activity actually receives its own QWERTY T key from the named UHID device, instead of only checking the service returned success.
-- Added the 3-key T-Y-U keyboard test in the floating controls, delayed slightly after touch to avoid keyboard/game focus confusion.
-- Added Android InputDevice enumeration and a copyable diagnostic report; clear error states for UHID/OS registration problems.
-- Updated HID keyboard descriptor with LED output support, bus selection and blocking device writes.
+**Testing:** GitHub Actions compiles the Android APK and runs JUnit. Passing Actions does **not** verify real Roblox behavior on the user's Galaxy device. If the player still stops, use the new floating **진단 복사** button to capture the exact stop cause and position.
 
-## Test order
-
-1. Start Shizuku and approve authorization.
-2. The app must show **Android 인식 1/1**.
-3. Run the app's **① Android 앱에서 HID 키 수신 검사**. A pass should say **Android HID 입력 수신 성공**.
-4. With the virtual keyboard already registered, **force-stop and reopen Roblox**. Enable the game's normal QWERTY keyboard input; do not focus chat.
-5. Use the floating overlay **QWERTY T-Y-U 입력 시험**. Look for three notes, then try MIDI playback.
-
-**Important:** Not all Roblox piano experiences recognize external keyboards on the Android client. A local Android HID reception pass does not prove a game receives a key. If a real physical USB/Bluetooth keyboard also fails in the same Roblox piano, this is likely a game/mobile support limitation. No external remote server or root-based bypass is involved.
-
-Release APK is a GitHub Actions debug-signed experimental preview. Device tests still needed.
+The APK is preview/debug signed. If an update fails due to signature mismatch, uninstall the older preview before installing (this resets settings). No credentials or Roblox accounts are accessed.

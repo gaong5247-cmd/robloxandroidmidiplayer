@@ -27,6 +27,11 @@ public final class KeyboardPulseEmitter {
     public long skippedTaps() { return skippedTaps; }
     public long releaseFailures() { return releaseFailures; }
     public String releaseError() { return releaseError; }
+    public void resetDiagnostics() {
+        skippedTaps = 0;
+        releaseFailures = 0;
+        releaseError = "";
+    }
 
     public KeyboardPulseEmitter(InputBridge bridge) {
         this.bridge = bridge;
