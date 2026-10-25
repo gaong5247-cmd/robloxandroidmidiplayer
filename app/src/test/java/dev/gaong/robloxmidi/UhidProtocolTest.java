@@ -51,6 +51,22 @@ public class UhidProtocolTest {
         assertEquals(0x2C, UhidProtocol.keyUsage(KeyEvent.KEYCODE_SPACE));
         assertEquals(0, UhidProtocol.keyUsage(KeyEvent.KEYCODE_ENTER));
     }
+    @Test public void supportsBusProfiles() {
+        byte[] usb = UhidProtocol.create2("USB keyboard", UhidProtocol.BUS_USB);
+        byte[] virtual = UhidProtocol.create2("Virtual keyboard", UhidProtocol.BUS_VIRTUAL);
+        assertEquals(3, u16(usb, 4 + 258));
+        assertEquals(6, u16(virtual, 4 + 258));
+        assertEquals(11, u32(usb, 0));
+        assertEquals(11, u32(virtual, 0));
+    }
+    @Test public void rejectsUnknownBus() {
+        try {
+            UhidProtocol.create2("Invalid", 99);
+            fail("Unexpected bus accepted");
+        } catch (IllegalArgumentException expected) {
+            assertNotNull(expected.getMessage());
+        }
+    }
     @Test public void rejectsOverflow() {
         try {
             UhidProtocol.keyboardReport(false, Arrays.asList(4,5,6,7,8,9,10));

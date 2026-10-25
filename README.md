@@ -1,49 +1,73 @@
-# Roblox Android MIDI Player
+# Roblox Android MIDI Player — Universal QWERTY mode
 
-**Experimental Android HuMIDI-inspired MIDI player using Linux UHID hardware-style keyboards via Shizuku.**
+An experimental **Android QWERTY MIDI player**, inspired by HuMIDI, intended for Roblox piano games which support physical keyboard input.
 
-## Why UHID?
+**No MidiConnect protocol, no Roblox modifications, no coordinate-tap macro.** We only use standard QWERTY keyboard scancodes through a Linux UHID virtual keyboard registered by a Shizuku UserService.
 
-The v0.1 preview sent synthetic Android `KeyEvent` objects through `InputManager.injectInputEvent`. On Roblox mobile, these can appear in chat text fields without generating the keyboard events used by piano games.
+## Why the v0.3 compatibility reset?
 
-**v0.2** opens `/dev/uhid` from a Shizuku UserService with shell/root identity and registers **four virtual USB HID keyboards**. MIDI note events are translated into *physical-style HID reports* for the Android input system. This approach is based on publicly documented Linux UHID ABI behavior and on research of the existing [EDLLT/RobloxAndroidMidi project](https://github.com/EDLLT/RobloxAndroidMidi). No code is copied from that GPL-3.0 project.
+The original v0.1 tried synthetic Android KeyEvents. They could type into Roblox chat but didn't trigger game controls. v0.2 added UHID, but started four keyboards and held notes for their full MIDI duration. In [EDLLT's Android Roblox MIDI player's QWERTY source](https://github.com/EDLLT/RobloxAndroidMidi), the author uses **one** UHID keyboard with short key taps and reports QWERTY mode working in supported piano experiences.
+
+v0.3 changes the defaults to match that simpler input model and adds tests that can distinguish "Shizuku accepted an input request" from "Android actually delivered a physical-style key press". This is not a guarantee that Roblox will recognize the input in every experience or on every Android device.
 
 ## Features
 
-- Standard MIDI 0/1 file parser: tempo changes, multiple tracks, note lengths, CC64 sustain.
-- Default **61-note Roblox Virtual Piano keymap (C2–C7)**, plus editable custom layout.
-- QWERTY notes including Shift combinations, octave folding, transpose ±24 semitones.
-- Four virtual keyboards × six key slots each for simultaneous chords.
-- 0.25x–3.0x speed; play/pause/stop, seek.
-- Floating controller over Roblox; Android foreground playback service.
-- UHID registration diagnostic, C4 (default `t`) game test; stop releases all held keys.
-- Entirely on device, no telemetry, no Roblox credentials.
+- Android 8+ native APK; no desktop software required once Shizuku is started.
+- MIDI format 0/1 playback with tempo changes, multiple tracks, chords, MIDI CC64.
+- QWERTY Virtual Piano 61 notes from C2–C7 (MIDI 36–96), octave fold and transpose.
+- **Short QWERTY taps by default (40 ms)** with configurable 25/40/60/90/140 ms options; hold-mode toggle for games that support note length.
+- Fast note retriggering with delayed key-up scheduling that does not block the MIDI event loop.
+- Default profile **one USB UHID virtual keyboard**. Optional USB 4-keyboard, VIRTUAL 1-keyboard, VIRTUAL 4-keyboard profiles for troubleshooting / chords.
+- On-screen floating player above Roblox, T/Y/U QWERTY sequence, C4 key test.
+- **Device diagnostic report** displays how many UHID input devices Android enumerated.
+- **Local receive test**: while the player app is visible, sending a C4 HID note updates the app *only if Android dispatched the T KeyEvent from our named UHID device*, not merely because the service says "sent".
+- No internet account, Roblox credentials, access to other apps' data, or midi-connect protocol.
 
-### Installation and diagnosis
+## How to test Android and Roblox separately
 
-1. Install [Shizuku](https://shizuku.rikka.app/download/) and activate its service. Android **11+** can activate without a computer using Wireless Debugging; Android 8–10 generally require ADB from a computer unless rooted.
-2. Install [latest v0.2 UHID preview APK](../../releases/latest) and grant Shizuku authorization.
-3. The app should display **UHID 하드웨어 키보드 서비스 활성화 · Android 인식 4/4개**. If it reports `UHID_FAILED: Cannot open /dev/uhid`, your device/ROM blocks access for shell, so this backend cannot work on that phone.
-4. Choose a `.mid` file, enable the floating controller, and switch to a Roblox piano.
-5. Make sure the in-game piano's QWERTY/keyboard input option is enabled, close the Roblox chat field and tap **C4** in the floating controller. Check that C4 plays in the game. If no sound, Android registering a UHID keyboard alone doesn't prove the particular game supports keyboard input on mobile.
-6. If the test plays, press ▶. Change the 61-key mapping for games with different layouts.
+1. Install [Shizuku](https://shizuku.rikka.app/download/), start it and grant authorization to this player. On Android 11+ you can start Shizuku with Android Wireless Debugging (no PC required); on Android 8–10 non-root Shizuku normally needs PC ADB to start.
+2. Install APK v0.3 from the [GitHub Releases page](../../releases); see the **preview version**.
+3. In the app, check "UHID 준비됨" and "Android 인식 1/1". If it says "0/1" or "UHID_FAILED", copy the diagnostic report and troubleshoot Android device creation before trying Roblox.
+4. Tap **① Android 앱에서 HID 키 수신 검사**. The test emits MIDI C4, mapped to the QWERTY **T key**. The diagnostic status changes to "Android HID 입력 수신 성공" only if the real Activity receives a KeyEvent tagged with our UHID device.
+5. **Completely close/force-stop Roblox after the keyboards are already registered. Restart Roblox** and enter a QWERTY-compatible piano experience. Avoid focusing the in-game chat box. Enable any in-game keyboard/QWERTY mode or playing focus.
+6. From the floating player, tap **QWERTY T-Y-U 입력 시험**. The input sequence is delayed so the overlay click finishes first. Check that the game plays C4/D4/E4. If so, load a .mid and play.
+7. If Android's local test succeeds but Roblox does not react, a software-only test cannot force a Roblox experience to accept mobile external keyboard events. Try **USB 1-keyboard** first, then VIRTUAL 1-keyboard, and **restart Roblox after profile changes**. If available, test whether the game recognizes a real Bluetooth/USB keyboard T key on the same device. No real-keyboard response indicates a game limitation rather than a MIDI mapping bug.
 
-### Caveats
+### QWERTY input profiles
 
-- **No guarantee across all Roblox experiences or Android manufacturers.** Shell permission and Roblox input support are separate requirements.
-- A 6-key USB HID report has a six-key limit. Four devices give 24 simultaneous plain key slots, but different shift combinations can still interact in Android's aggregate modifier state.
-- Some Roblox games intentionally handle only touch input on mobile, even if the phone recognizes a keyboard.
-- Preview is debug-signed. On update if Android reports "App not installed" due to signature mismatch, uninstall old preview first; user preferences are not preserved by uninstall.
-- Follow Roblox game rules when using automation.
+| Profile | Keys/chords | Purpose |
+|---|---:|---|
+| USB 1 keyboard (default) | 6 HID usages | Follows EDLLT's compatible architecture |
+| USB 4 keyboards | up to 24 usages | High polyphony, may be less compatible |
+| Virtual 1 keyboard | 6 | Android HID bus alternative |
+| Virtual 4 keyboards | up to 24 | Experimental |
 
-### Build
+For more robust piano songs, start with tap mode and 40ms. A 61-note mapping is not universal for all Roblox games; use the editable custom layout if needed.
 
-GitHub Actions builds every commit to `main` with JDK 17, Gradle 8.9, and Android SDK 35, running the parser, keymap and UHID protocol tests before publishing the debug-signed APK in an experimental Release.
+### Troubleshooting decision tree
 
-```sh
+- Shizuku not connected → start and authorize it.
+- UHID_FAILED opening /dev/uhid → ROM blocks shell, no QWERTY device created.
+- Android shows 0/X keyboards → input device registration failure or delay; reconnect.
+- Android local key reception fails → OS input stack issue; try USB vs VIRTUAL bus and 1 keyboard.
+- Android local test succeeds but Roblox does not → check physical Bluetooth/USB keyboard and game keyboard UI, then restart Roblox with virtual device already registered. QWERTY automation cannot be guaranteed in Roblox experiences that only accept touch input on mobile.
+- Test keys work but song doesn't → change tap/hold, key duration, speed and layout.
+
+## Build
+
+GitHub Actions run JDK 17 + Android SDK 35 + Gradle 8.9:
+
+```bash
 gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 ```
 
-### Original projects and license
+Every successful commit to `main` builds an **experimental prerelease APK**. It is debug-signed with a potentially ephemeral CI key, so uninstall an older version if Android reports a signature mismatch. Reinstall resets preferences.
 
-The app is independently written under MIT, inspired by [HuMIDI by smyGitt](https://github.com/smyGitt/HuMidi-Roblox-Piano-Autoplayer) (MIT), with research referencing [RobloxAndroidMidi by EDLLT](https://github.com/EDLLT/RobloxAndroidMidi) (GPL-3.0), without copying its code. The [Shizuku API](https://github.com/RikkaApps/Shizuku-API) is Apache-2.0. Linux userspace UHID definitions are a public kernel ABI.
+## Research and credits
+
+- Original HuMIDI idea: [smyGitt/HuMidi-Roblox-Piano-Autoplayer](https://github.com/smyGitt/HuMidi-Roblox-Piano-Autoplayer) (MIT).
+- QWERTY architecture research: [EDLLT/RobloxAndroidMidi](https://github.com/EDLLT/RobloxAndroidMidi) (GPL-3.0). Code here is independently implemented.
+- Linux UHID input packet structure: `linux/uhid.h`, with standard USB HID keyboard descriptor.
+- Shizuku API: [RikkaApps/Shizuku-API](https://github.com/RikkaApps/Shizuku-API) (Apache-2.0).
+
+Please respect the rules of any Roblox experience you use.
