@@ -1,56 +1,69 @@
 # Roblox Android MIDI Player — Universal QWERTY
 
-A HuMIDI-inspired Android MIDI player that sends **QWERTY USB HID keyboard events** to Roblox piano games through Shizuku. No MidiConnect, no remote server, no on-screen keyboard macro.
+**Shizuku + Linux UHID-based Android MIDI player for Roblox piano experiences that accept physical QWERTY keyboard input.** This is a HuMIDI-inspired native Android app, not a touch-coordinate clicker. It does not require MidiConnect or send a game-specific protocol.
 
-**v0.4.0 stability preview:** Addresses a reported problem where MIDI playback worked for about seven seconds and then stopped. A mixed Shift + normal chord or a seventh simultaneously held key used to make the entire playback worker exit. The virtual keyboard now releases a conflicting chord and continues, and the playback scheduler keeps a recoverable overflow from ending the song.
+## v0.5.0: Shizuku / UHID reconnect reliability
 
-> Build/unit tests cannot verify the exact user's phone, Roblox experience or MIDI. This is an experimental fix pending device validation; brief note clipping is possible in extremely dense chords.
+The v0.4 application could lose keyboard input after Shizuku or its UserService disconnected, and pressing the ordinary Connect button could leave a stale service connection untouched. v0.5 changes the lifecycle:
 
-## Features
+1. **One device registration at startup:** the old UserService created the keyboard in its constructor and re-created it immediately after binding. Now it waits for the client and registers a single configured device once.
+2. **In-place UHID recovery first:** a new **↻ 가상 키보드 다시 등록** action releases the old input device and rebuilds it while retaining the existing Shizuku session. This avoids unnecessary UserService unbind/rebind cycles.
+3. **UserService death detection:** Binder death and disconnection callbacks invalidate the prior connection state. Old callback registrations are cleaned up, and a new UserService can be bound without restarting the entire app.
+4. **Shizuku manager restart support:** when the Shizuku Binder is lost, playback stops with an explicit reason; when the Shizuku server comes back, the app attempts a fresh bind with permission verification.
+5. **Android input-device watchdog:** every 2.5 seconds the app checks for missing UHID keyboard devices. Stable device disappearance triggers a bounded recovery attempt.
+6. **Exponential backoff:** 750ms, 1.5s, 3s and 6s retry delays, followed by a clear manual action instead of infinite reconnect loops. The counter only resets after ~20 seconds of continuous healthy input-device enumeration, so a device that disconnects every seven seconds does not loop forever.
+7. **Resumable MIDI timeline:** the song position is preserved on a connection loss. After recovery, ▶ resumes near the point where the virtual keyboard disconnected.
+8. **Diagnostics:** the floating controls support copying Shizuku status, Binder generation, last disconnection cause, input-device count, and MIDI playback position.
 
-- Standard MIDI Format 0/1 support: tracks, tempo changes, Note On/Off, MIDI CC64.
-- 61-key QWERTY keyboard layout, C2–C7, user-editable; octave folding and transposition.
-- Shizuku UserService creating Linux UHID virtual keyboard devices via `/dev/uhid`, delivered as kernel HID reports rather than Android's text input.
-- **One USB virtual keyboard is the recommended default** for broad Roblox compatibility; 4-keyboard and Linux Virtual bus profiles can be selected.
-- **No "song stops because of chord" bug:** if the six-key HID report is full, or a black-key Shift modifier conflicts with an active unshifted key, the driver emits a release report and retriggers subsequent keys. This trades a shortened chord for continuous playback.
-- 25–140 ms QWERTY taps (40 ms default) and optional MIDI-duration hold mode.
-- Safely handles repeated notes, resets held keys on stop/pause and records asynchronous release failures.
-- A floating play/pause/stop panel with C4 and T–Y–U tests, timeline, speed, **playback state, last error and a diagnostics-copy button**.
-- Playback diagnostics include **current and last stop time, note attempts/successes/skips, and the last error**, and Shizuku diagnostics report **UHID recovery and preempted-key counts**.
+### Download/install
 
-## Install
+Install the APK from [Releases](../../releases/tag/v0.5.0-reconnect-preview). This is a **preview/debug-signed** build. Because GitHub Actions uses a temporary debug signing key, Android may reject installing over an earlier preview; uninstall the previous version if needed, which clears app settings.
 
-1. Install/start [Shizuku](https://shizuku.rikka.app/download/) and authorize the player. Non-root Android 11+ has an on-device Wireless Debugging path to start Shizuku; Android 8–10 generally require initial PC ADB.
-2. Download the experimental v0.4.0 stability APK from [Releases](../../releases).
-3. Start the app → Shizuku connection → verify `UHID 준비됨 · Android 인식 1/1`.
-4. Select a `.mid` song and open the floating overlay.
-5. Fully reopen Roblox **after** the virtual keyboard was registered, focus an in-game QWERTY piano, close chat, and test C4 or T–Y–U.
-6. Play the MIDI. The panel now shows whether playback is running, completed, manually stopped or stopped due to an actual input error.
+Android 8.0+ supported at the APK level. Shizuku must be installed and authorized:
+- Android 11+: Shizuku can be activated locally through Wireless Debugging.
+- Android 8–10: on unrooted phones, starting Shizuku normally requires a PC running ADB.
+- Samsung/other OEMs may terminate background services under aggressive battery policy. If you find Shizuku *itself* stopped, restart it from Shizuku before opening the MIDI app. Optional battery optimization settings are linked from the player UI.
 
-## If it cuts off around 7 seconds again
+### How to recover if Roblox piano keys stop working
 
-1. Note whether the time continues advancing while sound stops. If it keeps moving, game input or note processing may be failing; if playback state says `입력 오류로 중단`, it is an app/backend exception.
-2. In the floating player tap **진단 복사**. Paste the copied report into the issue/chat (it contains event counters and backend status; no credentials).
-3. Look at `recoveries=` in service diagnostics. This counter increases when overlapping Shift or >6 held notes require an automatic release/repress; it should no longer abort playback.
-4. If notes are still missing, try 25ms key taps and **USB 4 keyboards** for greater polyphony. Some Roblox/mobile configurations recognize one virtual keyboard more reliably than four. Restore USB 1 if 4 no longer works.
-5. If the app reports `곡 종료` at about 7 seconds, the parsed MIDI timeline may itself be shorter than expected; the diagnostic report includes parsed duration. Try another MIDI.
-6. If the app process disappears or Shizuku disconnects, check foreground notification, battery optimization policy and the Shizuku status on the phone.
+1. In the app, check the status: **Shizuku 서비스 종료됨**, **UHID 등록 실패**, and **Android 인식 0/1** are distinct diagnoses.
+2. If Shizuku is running, press **↻ 가상 키보드 다시 등록** in the app or **↻ 키보드 복구** in the floating panel. Do not force-restart Shizuku first; the repair tries to keep it alive.
+3. Wait until the app shows **Android 인식 1/1** in the default profile.
+4. Make sure Roblox chat is closed, the piano is active and its QWERTY input option is enabled. Test **C4 (T)** or **T–Y–U**.
+5. If the game stays silent after Android shows 1/1, **fully close Roblox and launch it again with the HID keyboard already registered.** Some game/client versions only re-check input modality when joining an experience.
+6. If in-place repair still fails, use **UserService 완전 재연결** from the main player. This is a more disruptive fallback. On certain Shizuku/ROM versions, repeated UserService unbinds may fail until Shizuku is restarted.
+7. When Shizuku itself has stopped, activate it from the Shizuku app; Android applications cannot unilaterally restore privileged Shizuku service identity without a new authorized start.
+8. If this still breaks, use **진단 복사** in the floating player, then share the status text and whether it failed before or after seven seconds. The report intentionally omits Roblox credentials.
 
-The default is still broadly reusable QWERTY keyboard input, **not** Visual Pianos-specific and **not** MidiConnect. Some Roblox games do not support external keyboard input on mobile, so broad compatibility is a goal rather than a guarantee.
+### QWERTY features
 
-## Engineering and build
+- MIDI Standard Format 0/1 with tempo changes, multiple tracks and note velocities interpreted as note-on/off; CC64 sustain optionally maps to Space.
+- 61-key C2–C7 QWERTY piano layout with custom character mapping, octave folding, transpose ±24.
+- USB HID one keyboard default; optional four-key or BUS_VIRTUAL HID alternatives.
+- Short QWERTY taps (25–140ms, 40ms default) and optional note-length hold mode.
+- Dense chord support without stopping the song at six-key overflow / conflicting Shift usage.
+- Floating player for play/pause/stop, seek, speed, C4 test, T–Y–U, manual reconnect, diagnostics.
 
-- Pure Java `UhidKeyState` models the HID six-key limit and Shift-group allocation. When necessary it reclaims the smallest active report and explicitly issues an all-up report before a new press.
-- `UhidKeyboard` sends HID reports via shell/root Shizuku context; IO failures still stop playback with a visible error.
-- `PlayerController` logs the stop position and counts; temporary key occupancy is handled without terminating playback.
-- JUnit regressions cover Shift conflicts, seven-note chords, duplicate key references, and 6,000 densely spaced note presses.
-- GitHub Actions uses JDK 17, Gradle 8.9, Android SDK 35:
-  ```sh
-  gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
-  ```
+### Limitations
 
-The preview APK is debug-signed by CI. When upgrading between previews, you may need to uninstall the previous debug build if signing certificates differ (this resets local settings).
+- **Android's UHID device being present does not guarantee Roblox accepts its keyboard events** in every piano experience, nor that a running experience will follow a newly attached keyboard without rejoining.
+- Reconnecting a restarted Shizuku server requires Shizuku to be running again. Apps cannot silently restart a privileged Shizuku server whose ADB/session authorization has ended.
+- The self-healing mechanisms are exercised by unit-tested policy and Android APK compilation, not yet verified on this user's Galaxy S26 and Roblox client. In the event of an intermittent OEM or Shizuku provider bug, manual restart may remain necessary.
+- The APK is not signed for Play Store production. Debug signatures may change across CI builds.
+- Follow each Roblox experience's rules regarding automated inputs.
 
-## Credits
+### Build and tests
 
-Built as an independent Android reimplementation inspired by [HuMIDI](https://github.com/smyGitt/HuMidi-Roblox-Piano-Autoplayer) (MIT). QWERTY UHID research refers to [EDLLT/RobloxAndroidMidi](https://github.com/EDLLT/RobloxAndroidMidi) (GPL-3.0) and [scrcpy](https://github.com/Genymobile/scrcpy) (Apache-2.0); their source is not copied. Shizuku is [Apache-2.0](https://github.com/RikkaApps/Shizuku-API). Please respect each Roblox game's rules for automated playing.
+Runs on GitHub Actions with JDK 17, Gradle 8.9 and Android SDK 35:
+```sh
+gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
+```
+Unit tests cover MIDI parsing, key layouts, USB HID packet structure, mixed-Shift/rollover chords, 6,000 consecutive key actions and bounded reconnect backoff.
+
+### Research, credits and license
+
+- Original HuMIDI concept: [smyGitt/HuMidi-Roblox-Piano-Autoplayer](https://github.com/smyGitt/HuMidi-Roblox-Piano-Autoplayer) (MIT).
+- QWERTY HID implementation research: [EDLLT/RobloxAndroidMidi](https://github.com/EDLLT/RobloxAndroidMidi) (GPL-3.0), referenced but not copied.
+- Shizuku API: [RikkaApps/Shizuku-API](https://github.com/RikkaApps/Shizuku-API) (Apache-2.0).
+- Android UHID behavior reference: [Genymobile/scrcpy](https://github.com/Genymobile/scrcpy) (Apache-2.0), researched but not copied.
+- This repository's independently written code is MIT licensed.
