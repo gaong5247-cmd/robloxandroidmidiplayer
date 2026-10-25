@@ -120,13 +120,12 @@ public final class InputBridge {
             try {
                 // The UserService constructor registers a single USB keyboard,
                 // so no costly reset is needed when using the recommended profile.
-                boolean okay = (requestedCount == 1 && requestedBus == UhidProtocol.BUS_USB)
-                        || target.configureKeyboard(requestedCount, requestedBus);
+                boolean okay = target.configureKeyboard(requestedCount, requestedBus);
                 String report = target.getBackendStatus();
                 if (remote != target) return;
                 backendReady = okay && report.startsWith("UHID_READY:");
                 status = backendReady
-                        ? "UHID 준비됨 · USB 키보드 입력 (QWERTY)"
+                        ? "UHID 준비됨 · QWERTY 입력"
                         : "UHID 생성 실패: " + report;
             } catch (Throwable error) {
                 backendReady = false;

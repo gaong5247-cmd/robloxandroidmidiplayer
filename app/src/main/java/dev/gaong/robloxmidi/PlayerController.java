@@ -16,6 +16,10 @@ public final class PlayerController {
     }
 
     private final InputBridge bridge;
+    private final KeyboardPulseEmitter pulses;
+    private volatile boolean tapMode = true;
+    private volatile int tapDurationMs = 40;
+    private long runGeneration;
     private final Object mutex = new Object();
     private volatile PianoLayout layout = new PianoLayout(PianoLayout.DEFAULT);
     private volatile MidiParser.Song song;
@@ -32,7 +36,10 @@ public final class PlayerController {
     private long anchorNs;
     private long anchorUs;
 
-    private PlayerController(Context c) { bridge = InputBridge.get(c); }
+    private PlayerController(Context c) {
+        bridge = InputBridge.get(c);
+        pulses = new KeyboardPulseEmitter(bridge);
+    }
 
     public String filename() { return filename; }
     public boolean hasSong() { return song != null; }
@@ -42,6 +49,15 @@ public final class PlayerController {
     public int transpose() { return transpose; }
     public boolean fold() { return fold; }
     public boolean sustain() { return sustain; }
+    public boolean tapMode() { return tapMode; }
+    public int tapDurationMs() { return tapDurationMs; }
+    public void setTapMode(boolean value) {
+        stop();
+        tapMode = value;
+    }
+    public void setTapDurationMs(int ms) {
+        tapDurationMs = Math.max(20, Math.min(150, ms));
+    }
     public String error() { return error; }
     public int notes() { return song == null ? 0 : song.noteCount; }
     public long durationUs() { return song == null ? 0 : song.durationUs; }
@@ -102,7 +118,7 @@ public final class PlayerController {
             anchorUs = positionUs;
             anchorNs = System.nanoTime();
         }
-        bridge.allUp();
+        pulses.clear();
     }
 
     public void togglePlay() {
@@ -123,7 +139,8 @@ public final class PlayerController {
             paused = false;
             anchorUs = positionUs;
             anchorNs = System.nanoTime();
-            worker = new Thread(this::runPlayer, "midi-scheduler");
+            long generation = ++runGeneration;
+            worker = new Thread(() -> runPlayer(generation), "midi-scheduler");
             worker.start();
         }
     }
@@ -134,7 +151,7 @@ public final class PlayerController {
             positionUs = clockPositionLocked();
             paused = true;
         }
-        bridge.allUp();
+        pulses.clear();
     }
 
     private void resume() {
@@ -152,6 +169,7 @@ public final class PlayerController {
         synchronized (mutex) {
             playing = false;
             paused = false;
+            runGeneration++;
             positionUs = 0;
             index = 0;
             mutex.notifyAll();
@@ -159,16 +177,16 @@ public final class PlayerController {
             worker = null;
         }
         if (old != null) old.interrupt();
-        bridge.allUp();
+        pulses.clear();
     }
 
-    private void runPlayer() {
+    private void runPlayer(long generation) {
         try {
-            while (playing) {
+            while (playing && generation == runGeneration) {
                 MidiParser.Event event = null;
                 long sleepMs = 5;
                 synchronized (mutex) {
-                    if (!playing) break;
+                    if (!playing || generation != runGeneration) break;
                     if (paused) {
                         try { mutex.wait(150); } catch (InterruptedException e) { break; }
                         continue;
@@ -194,7 +212,15 @@ public final class PlayerController {
                             if (sustain) bridge.send(KeyEvent.KEYCODE_SPACE, event.down, false);
                         } else {
                             PianoLayout.Stroke mapped = stroke(event.note);
-                            if (mapped != null) bridge.send(mapped.code, event.down, mapped.shift);
+                            if (mapped != null) {
+                                if (tapMode) {
+                                    // Most QWERTY piano games react to each fresh KeyDown,
+                                    // not to a sustained physical key state.
+                                    if (event.down) pulses.tap(mapped.code, mapped.shift, tapDurationMs);
+                                } else {
+                                    bridge.send(mapped.code, event.down, mapped.shift);
+                                }
+                            }
                         }
                     }
                 } else {
@@ -204,13 +230,17 @@ public final class PlayerController {
         } catch (Exception ex) {
             error = "연주 중 입력 실패: " + ex.getMessage();
         } finally {
+            boolean current;
             synchronized (mutex) {
-                playing = false;
-                paused = false;
-                positionUs = Math.min(durationUs(), positionUs);
-                worker = null;
+                current = generation == runGeneration;
+                if (current) {
+                    playing = false;
+                    paused = false;
+                    positionUs = Math.min(durationUs(), positionUs);
+                    worker = null;
+                }
             }
-            bridge.allUp();
+            if (current) pulses.clear();
         }
     }
 
