@@ -139,7 +139,10 @@ public class OverlayService extends Service {
         small("QWERTY T-Y-U 입력 시험", testing, bridge::testQuickKeys);
         small("↻ 키보드 복구", testing, () -> {
             bridge.recoverKeyboard();
-            Toast.makeText(this, "UHID 키보드 다시 등록 중 · 작동 안 하면 Roblox 재실행",
+            Toast.makeText(this,
+                    bridge.serverRunning()
+                            ? "UHID 키보드 복구 중 · 재등록 후에도 무반응이면 Roblox를 재실행하세요"
+                            : "Shizuku 자체가 꺼졌습니다. Shizuku 앱에서 먼저 시작하세요",
                     Toast.LENGTH_LONG).show();
         });
         root.addView(testing);

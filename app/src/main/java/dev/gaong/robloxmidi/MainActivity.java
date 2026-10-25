@@ -115,6 +115,17 @@ public class MainActivity extends Activity {
                         .setNegativeButton("취소", null)
                         .show());
         hint(root, "연결이 중간에 끊겼다면 '가상 키보드 다시 등록'을 먼저 누르세요. 복구되어도 Roblox가 이전 키보드를 기억하면 게임을 완전히 종료하고 다시 실행해야 합니다. Shizuku 자체가 꺼졌다면 Shizuku 앱에서 다시 시작해야 합니다.");
+        Button batterySettings = button("배터리 최적화 설정 열기 (연결이 자꾸 끊길 때)");
+        root.addView(batterySettings);
+        batterySettings.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (Exception e) {
+                startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + getPackageName())));
+            }
+        });
+        hint(root, "휴대폰 배터리 제한이 원인이라면 Shizuku와 Roblox MIDI Player를 제한 없음으로 설정해 보세요. 이 설정만으로 복구가 보장되지는 않습니다.");
         gap(root, 18);
 
         midiName = label("MIDI를 선택하세요", 17, Color.WHITE);
