@@ -1,79 +1,57 @@
 package dev.gaong.robloxmidi;
 
+import android.os.SystemClock;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
-import android.os.SystemClock;
+
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
- * Real virtual HID keyboard devices via /dev/uhid, running ONLY inside a
- * Shizuku shell/root UserService (never as a normal Android app).
+ * Shizuku UserService-backed Linux UHID keyboard.
  *
- * One virtual keyboard is the compatibility-first default, matching tested
- * RobloxAndroidMidi's QWERTY mode. Four are optional for chords.
- * Multiple keyboards may not work in all Roblox/Android combinations.
+ * Keeps the v0.3 single USB-HID keyboard by default. Unlike v0.3, the
+ * driver never rejects a dense chord merely because a 6-key report is full
+ * or the next note has a different Shift state. Instead, it releases the
+ * smallest conflicting chord and emits a fresh report with a short boundary.
+ * This preserves playback at the cost of briefly shortening held notes.
  */
 public final class UhidKeyboard implements AutoCloseable {
     public static final String NAME_PREFIX = "HuMIDI UHID Keyboard ";
     public static final int DEVICE_COUNT = 4;
     public static final int DEFAULT_DEVICE_COUNT = 1;
 
-    private static final class KeyHold {
-        final int usage;
-        final boolean shift;
-        final int device;
-        int references = 1;
-        KeyHold(int usage, boolean shift, int device) {
-            this.usage = usage;
-            this.shift = shift;
-            this.device = device;
-        }
-    }
-
-    private static final class KeyboardDevice {
-        final FileDescriptor descriptor;
-        final LinkedHashMap<Integer, KeyHold> keys = new LinkedHashMap<>();
-        KeyboardDevice(FileDescriptor fd) { descriptor = fd; }
-    }
-
-    private final List<KeyboardDevice> devices = new ArrayList<>();
-    private final Map<Integer, KeyHold> active = new HashMap<>();
+    private final List<FileDescriptor> devices = new ArrayList<>();
+    private final UhidKeyState state;
     private boolean closed;
+    private volatile String lastError = "";
 
     public UhidKeyboard() throws IOException {
         this(DEFAULT_DEVICE_COUNT, UhidProtocol.BUS_USB);
     }
 
     public UhidKeyboard(int deviceCount, int bus) throws IOException {
-        if (deviceCount != 1 && deviceCount != DEVICE_COUNT) {
+        if (deviceCount != 1 && deviceCount != DEVICE_COUNT)
             throw new IllegalArgumentException("Choose 1 or 4 keyboards");
-        }
-        if (bus != UhidProtocol.BUS_USB && bus != UhidProtocol.BUS_VIRTUAL) {
+        if (bus != UhidProtocol.BUS_USB && bus != UhidProtocol.BUS_VIRTUAL)
             throw new IllegalArgumentException("Choose USB or VIRTUAL HID bus");
-        }
+
+        state = new UhidKeyState(deviceCount);
         try {
-            for (int index = 0; index < deviceCount; index++) {
+            for (int i = 0; i < deviceCount; i++) {
                 FileDescriptor fd;
                 try {
                     fd = Os.open("/dev/uhid",
-                            OsConstants.O_RDWR | OsConstants.O_CLOEXEC,
-                            0);
+                            OsConstants.O_RDWR | OsConstants.O_CLOEXEC, 0);
                 } catch (ErrnoException e) {
                     throw new IOException("Cannot open /dev/uhid: " + e.getMessage(), e);
                 }
-                KeyboardDevice device = new KeyboardDevice(fd);
-                devices.add(device);
-                write(device, UhidProtocol.create2(NAME_PREFIX + (index + 1), bus));
+                devices.add(fd);
+                write(fd, UhidProtocol.create2(NAME_PREFIX + (i + 1), bus));
             }
-            // Android InputReader device enumeration is asynchronous.
-            // Delay availability until the kernel has had time to register devices.
             SystemClock.sleep(800);
         } catch (IOException | RuntimeException failure) {
             close();
@@ -81,9 +59,9 @@ public final class UhidKeyboard implements AutoCloseable {
         }
     }
 
-    private static void write(KeyboardDevice device, byte[] event) throws IOException {
+    private static void write(FileDescriptor fd, byte[] event) throws IOException {
         try {
-            int sent = Os.write(device.descriptor, event, 0, event.length);
+            int sent = Os.write(fd, event, 0, event.length);
             if (sent != event.length)
                 throw new IOException("Partial UHID event: " + sent + "/" + event.length);
         } catch (ErrnoException e) {
@@ -91,90 +69,50 @@ public final class UhidKeyboard implements AutoCloseable {
         }
     }
 
-    public synchronized int activeCount() { return active.size(); }
-    public synchronized int deviceCount() { return closed ? 0 : devices.size(); }
-
-    /**
-     * @return true if a report was sent or an existing stroke ref-counted,
-     *         false if all keyboard report slots are occupied.
-     */
     public synchronized boolean send(int keyCode, boolean down, boolean shift) throws IOException {
-        if (closed) throw new IOException("Virtual keyboards already closed");
+        if (closed) throw new IOException("UHID keyboard is closed");
         int usage = UhidProtocol.keyUsage(keyCode);
-        if (usage == 0) throw new IOException("Unsupported KeyEvent: " + keyCode);
-        int stroke = (usage << 1) | (shift ? 1 : 0);
-        KeyHold existing = active.get(stroke);
+        if (usage == 0) throw new IOException("Unsupported Android key: " + keyCode);
 
-        if (down) {
-            if (existing != null) {
-                existing.references++;
-                return true;
-            }
-            KeyboardDevice best = null;
-            int bestIndex = -1;
-            int highestFill = -1;
-            for (int i = 0; i < devices.size(); i++) {
-                KeyboardDevice device = devices.get(i);
-                if (device.keys.size() >= UhidProtocol.BOOT_KEY_SLOTS) continue;
-                if (!device.keys.isEmpty()) {
-                    // Shift is global within a keyboard HID report, so keep
-                    // shifted and unshifted notes on distinct virtual devices.
-                    KeyHold first = device.keys.values().iterator().next();
-                    if (first.shift != shift) continue;
-                }
-                boolean collision = false;
-                for (KeyHold key : device.keys.values()) {
-                    if (key.usage == usage) { collision = true; break; }
-                }
-                if (collision) continue;
-                // Pack existing compatible devices to keep others available.
-                if (device.keys.size() > highestFill) {
-                    best = device;
-                    bestIndex = i;
-                    highestFill = device.keys.size();
-                }
-            }
-            if (best == null) return false;
+        UhidKeyState.Change next = state.change(usage, down, shift);
+        if (!next.shouldWrite()) return true;
 
-            KeyHold hold = new KeyHold(usage, shift, bestIndex);
-            best.keys.put(stroke, hold);
-            try {
-                report(best);
-                active.put(stroke, hold);
-            } catch (IOException err) {
-                best.keys.remove(stroke);
-                throw err;
+        FileDescriptor fd = devices.get(next.device);
+        try {
+            if (next.releasePrevious) {
+                // A previous KeyDown needs time to reach Android InputReader
+                // before the next incompatible modifier or 7th rollover key.
+                SystemClock.sleep(4);
+                write(fd, UhidProtocol.input2(new byte[8]));
+                SystemClock.sleep(4);
             }
+            write(fd, UhidProtocol.input2(next.report));
             return true;
+        } catch (IOException problem) {
+            lastError = problem.toString();
+            // The software key state no longer matches kernel state.
+            releaseAll();
+            throw problem;
         }
-
-        if (existing == null) return true;
-        if (--existing.references > 0) return true;
-        active.remove(stroke);
-        KeyboardDevice device = devices.get(existing.device);
-        device.keys.remove(stroke);
-        report(device);
-        return true;
     }
 
-    private static void report(KeyboardDevice device) throws IOException {
-        List<Integer> usages = new ArrayList<>(device.keys.size());
-        boolean shift = false;
-        for (KeyHold key : device.keys.values()) {
-            usages.add(key.usage);
-            shift = key.shift;
-        }
-        write(device, UhidProtocol.input2(UhidProtocol.keyboardReport(shift, usages)));
+    public synchronized int activeCount() { return state.activeCount(); }
+    public synchronized int deviceCount() { return closed ? 0 : devices.size(); }
+    public synchronized String stats() {
+        return "held=" + state.activeCount()
+                + " downs=" + state.keyDowns()
+                + " recoveries=" + state.recoveries()
+                + " preempted=" + state.reclaimedKeys()
+                + " lateUps=" + state.ignoredReleases()
+                + (lastError.isEmpty() ? "" : " error=" + lastError);
     }
 
-    /** Emergency release on stop, pause, disconnect or a rejected event. */
+    /** Emergency release for pause/stop/disconnect or an actual UHID write error. */
     public synchronized void releaseAll() {
-        active.clear();
-        for (KeyboardDevice device : devices) {
-            device.keys.clear();
-            try {
-                write(device, UhidProtocol.input2(new byte[8]));
-            } catch (IOException ignored) { }
+        state.reset();
+        for (FileDescriptor fd : devices) {
+            try { write(fd, UhidProtocol.input2(new byte[8])); }
+            catch (IOException ignored) { lastError = ignored.toString(); }
         }
     }
 
@@ -182,10 +120,10 @@ public final class UhidKeyboard implements AutoCloseable {
         if (closed) return;
         releaseAll();
         closed = true;
-        for (KeyboardDevice device : devices) {
-            try { write(device, UhidProtocol.destroy()); }
+        for (FileDescriptor fd : devices) {
+            try { write(fd, UhidProtocol.destroy()); }
             catch (IOException ignored) { }
-            try { Os.close(device.descriptor); }
+            try { Os.close(fd); }
             catch (ErrnoException ignored) { }
         }
         devices.clear();
