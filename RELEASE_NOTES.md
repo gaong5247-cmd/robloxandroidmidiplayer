@@ -1,15 +1,29 @@
-# Roblox MIDI Android v0.1.0 Preview
+# Roblox MIDI Android v0.2.0 — Physical-Style UHID Keyboard Preview
 
-First Android-native, HuMIDI-inspired MIDI playback preview.
+**Fixes the original architecture that typed into Roblox chat but not in-game pianos.**
 
-- Standard MIDI 0/1 parser with tempo changes, polyphonic notes and CC64.
-- C2–C7 (61-note) Virtual Piano keyboard map, octave folding and transpose.
-- Android Shizuku UserService keyboard injection: key down + key up.
-- Floating controls usable over Roblox, playback speed and skipping.
-- Custom editable 61-key mapping stored locally.
+### Major change
 
-**Compatibility warning:** Built APK and passing unit tests do NOT prove Roblox accepts injected events. Test the C4 button in the desired game before relying on autoplay. Shizuku must be running and authorized.
+Replaced `InputManager.injectInputEvent()` with **four Linux UHID virtual USB keyboard devices** registered via privileged Shizuku UserService. Key events are now sent as kernel HID keyboard reports (UHID_CREATE2/UHID_INPUT2), not as synthetic `KeyEvent` objects.
 
-**Signing:** This preview is a GitHub Actions debug-signed APK. Debug keystore may change between builds, which can require uninstalling the old preview before installing an update. There is no production signing key configured.
+- Supports up to **24 concurrent plain key slots**, across four separate 6-key HID keyboards.
+- Independently groups shifted and unshifted keys to reduce QWERTY modifier collisions.
+- Explicit up/down HID reports; reference counting prevents duplicate notes from releasing too early.
+- Device status displays the number of UHID keyboards Android enumerated.
+- C4 in-game diagnostic: open piano and test `t` before MIDI autoplay.
+- UHID protocol serializer tests added to existing MIDI parser/keymap tests.
 
-No Roblox game code was modified, and no Roblox account credentials are required.
+### Important requirements
+
+- Shizuku running and authorized. Shell UID must be permitted to open `/dev/uhid`.
+- Android 8.0 or later; on Android 8–10, non-rooted Shizuku generally requires a PC to start via ADB. Android 11+ supports wireless debugging start.
+- Not all manufacturers allow shell access to `/dev/uhid`; the app displays an error rather than silently falling back to ineffective synthetic keys.
+- Roblox's own game scripts may still reject keyboard input on mobile. Verify C4 inside the piano game; **no actual Roblox gameplay was available to CI**.
+- Android may aggregate Shift across virtual keyboards; some complex mixed-modifier chords need further testing.
+- Preview APK is CI debug-signed; signature may differ between builds and require uninstalling the old preview.
+
+### Acknowledgements
+
+Research influenced by [EDLLT/RobloxAndroidMidi](https://github.com/EDLLT/RobloxAndroidMidi) (GPL-3.0); their implementation is not copied. Our UHID byte serialization follows the public Linux userspace ABI described in `linux/uhid.h`. HuMIDI inspired the player concept.
+
+Use in accordance with each game's rules for automated playing.

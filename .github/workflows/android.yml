@@ -27,12 +27,12 @@ jobs:
       - name: Run unit tests and build universal debug APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
       - name: Name APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk RobloxMIDI-Android-v0.1.0-preview.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk RobloxMIDI-Android-v0.2.0-UHID-preview.apk
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RobloxMIDI-Android-debug
-          path: RobloxMIDI-Android-v0.1.0-preview.apk
+          name: RobloxMIDI-Android-UHID-debug
+          path: RobloxMIDI-Android-v0.2.0-UHID-preview.apk
           if-no-files-found: error
       - name: Publish preview release only after successful build
         if: github.ref == 'refs/heads/main'
@@ -40,11 +40,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="v0.1.0-preview"
+          tag="v0.2.0-UHID-preview"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" RobloxMIDI-Android-v0.1.0-preview.apk --clobber
+            gh release upload "$tag" RobloxMIDI-Android-v0.2.0-UHID-preview.apk --clobber
           else
-            gh release create "$tag" RobloxMIDI-Android-v0.1.0-preview.apk \
-              --target "$GITHUB_SHA" --title "Roblox MIDI Android v0.1.0 Preview" \
+            gh release create "$tag" RobloxMIDI-Android-v0.2.0-UHID-preview.apk \
+              --target "$GITHUB_SHA" --title "Roblox MIDI Android v0.2.0 UHID Preview" \
               --prerelease --notes-file RELEASE_NOTES.md
           fi
